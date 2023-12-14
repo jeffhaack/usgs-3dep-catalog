@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 import os
 import urllib3
 import shutil
+from termcolor import cprint
 import json
 from geojson import Polygon, Feature, FeatureCollection, dump
 import shapefile
@@ -11,7 +12,9 @@ import geopandas as gpd
 
 bb_shapefile = "data/usa_1m_index.shp"
 out_shapefile = "data/output.json"
+out_shapefile2 = "data/output2.json"
 tempDir = r"scratch"
+errorList = []
 
 def main():
 
@@ -19,7 +22,8 @@ def main():
     print(f"Reading in {bb_shapefile}...")
     bbGdf = gpd.read_file(bb_shapefile) # read shp as geodataframe
     for feature in bbGdf.iterfeatures():
-        print(f"Analyzing feature ID={feature['id']} (total {len(bbGdf)} features)")
+        # print(f"Analyzing feature ID={feature['id']} ({'%.2f'%(int(feature['id'])*100/len(bbGdf))}% of {len(bbGdf)} features)")
+        cprint(f"Analyzing feature ID={feature['id']} ({'%.2f'%(int(feature['id'])*100/len(bbGdf))}% of {len(bbGdf)} features, {len(errorList)} errors)", 'green')
         # Get feature properties
         props = feature["properties"]   # geom = feature["geometry"] Don't need this for BB
         url = props["downloadUR"]
@@ -28,16 +32,17 @@ def main():
         try:
             outGdf = gpd.read_file(
                 out_shapefile,
-                where=f"dlUrl='{url}'",
+                where=f"downloadUr='{url}'",
             )
             if len(outGdf) > 1:
                 print("There may be an issue here")
             elif len(outGdf) == 1:
-                print(f"Already done {url}")
+                print(f"Already done ID {feature['id']}\n")
                 continue
             else:
-                print(f"Continuing with {url}")
-        except:
+                print(f"Continuing with ID {feature['id']}")
+        except Exception as e:
+            print(e)
             print(f"Looks like {out_shapefile} hasn't been created yet, continuing...")
         
         # Probably need to close the shapefile here for safety?? TODO?
@@ -52,38 +57,63 @@ def main():
         fetchFile(url, savePath)
 
         # Create json file of outline
-        tifGeom = makeDemPolygon(savePath, tempDir)
-        #print(tifGeom)
+        try:
+            tifGeom = makeDemPolygon(savePath, tempDir)
 
-        # Create new geojson file for feature
-        features = []
-        features.append(Feature(geometry=tifGeom, properties=props))
-        feature_collection = FeatureCollection(features)
-        outfile = os.path.abspath(os.path.join(tempDir, "tempOutfile.geojson"))
-        with open(f'{outfile}', 'w') as f:
-            dump(feature_collection, f)
+            # Create new geojson file for feature
+            features = []
+            features.append(Feature(geometry=tifGeom, properties=props))
+            feature_collection = FeatureCollection(features)
+            outfile = os.path.abspath(os.path.join(tempDir, "tempOutfile.geojson"))
+            with open(f'{outfile}', 'w') as f:
+                dump(feature_collection, f)
 
-        # Merge into shapefile
-        if os.path.isfile(out_shapefile):
-            print(f"Merging new feature into {out_shapefile}...")
-            # Read shapefiles
-            mainShp = gpd.read_file(out_shapefile)
-            newShp = gpd.read_file(outfile)
+            # Merge into shapefile
+            if os.path.isfile(out_shapefile2):
+                print(f"Merging new feature into {out_shapefile2}...")
+                # Read shapefiles
+                mainShp = gpd.read_file(out_shapefile2)
+                newShp = gpd.read_file(outfile)
 
-            # Merge/Combine multiple shapefiles into one
-            mergedShp = gpd.pd.concat([mainShp, newShp])
-            
-            #Export merged geodataframe into shapefile
-            mergedShp.to_file(out_shapefile)
-        else:
-            print(f"Creating {out_shapefile}...")
-            newShp = gpd.read_file(outfile)
-            newShp.to_file(out_shapefile)
+                # Merge/Combine multiple shapefiles into one
+                mergedShp = gpd.pd.concat([mainShp, newShp])
+                
+                #Export merged geodataframe into shapefile
+                mergedShp.to_file(out_shapefile2)
+            else:
+                print(f"Creating {out_shapefile2}...")
+                newShp = gpd.read_file(outfile)
+                newShp.to_file(out_shapefile2)
+
+            # Delete Temp Directory
+            print("Deleting Scratch Directory...\n")
+            cmd = f"rm -rf {tempDir}"
+            os.system(cmd)
+
+        except Exception as e:
+            print(e)
+            errorList.append(url)
+            # print(f"---\nError making DEM polygon, adding to error list and skipping...")
+            cprint(f"---\nError making DEM polygon, adding to error list and skipping...", 'red')
+            # print("Current errorList:")
+            cprint("Current errorList:", 'yellow')
+            # print(errorList)
+            cprint(errorList, 'yellow')
+            # print("----\n")
+            cprint("----\n", 'red')
+
+            # Delete Temp Directory
+            print("Deleting Scratch Directory...\n")
+            cmd = f"rm -rf {tempDir}"
+            os.system(cmd)
+
+            # Go on to next one
+            continue
+
+
         
-        # Delete Temp Directory
-        print("Deleting Scratch Directory...\n")
-        cmd = f"rm -rf {tempDir}"
-        os.system(cmd)
+        
+        
 
 
     
@@ -124,6 +154,7 @@ def makeDemPolygon(rasterFilePath, scratchDir):
     tempGdf = tempGdf.to_crs('EPSG:4326')
     feature = next(tempGdf.iterfeatures())
     geom = feature["geometry"]
+    # cprint(geom, 'cyan')
     return geom
 
 

@@ -1,5 +1,9 @@
 .DS_Store
 
 old_stuff/*
+test/*
+test2/*
+data/*
 02-outline*
 data/us*
+data/output.json
